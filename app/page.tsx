@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type ApiResponse = {
   code: number;
@@ -19,6 +19,16 @@ type ApiResponse = {
         name?: string;
       };
     };
+  };
+};
+
+type ReverseGeoResponse = {
+  address?: {
+    city?: string;
+    town?: string;
+    village?: string;
+    state?: string;
+    country?: string;
   };
 };
 
@@ -72,6 +82,12 @@ export default function Page() {
   const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
 
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [playedForEvent, setPlayedForEvent] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   useEffect(() => {
     const timer = setInterval(() => {
       setNow(new Date());
@@ -92,7 +108,12 @@ export default function Page() {
       const response = await fetch(url, { cache: "no-store" });
       const json: ApiResponse = await response.json();
 
-      if (!response.ok || json.code !== 200 || !json.data?.timings?.Fajr || !json.data?.timings?.Maghrib) {
+      if (
+        !response.ok ||
+        json.code !== 200 ||
+        !json.data?.timings?.Fajr ||
+        !json.data?.timings?.Maghrib
+      ) {
         throw new Error("Could not load prayer times for this location.");
       }
 
@@ -108,10 +129,82 @@ export default function Page() {
 
       setCity(nextCity);
       setCountry(nextCountry);
+      setCityInput(nextCity);
+      setCountryInput(nextCountry);
+      setPlayedForEvent(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function useMyLocation() {
+    if (!navigator.geolocation) {
+      setError("Geolocation is not supported on this device.");
+      return;
+    }
+
+    setLocationLoading(true);
+    setError("");
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+
+          const reverseUrl =
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
+            `&lat=${lat}&lon=${lon}`;
+
+          const response = await fetch(reverseUrl, {
+            headers: {
+              Accept: "application/json",
+            },
+          });
+
+          const geo: ReverseGeoResponse = await response.json();
+
+          const detectedCity =
+            geo.address?.city ||
+            geo.address?.town ||
+            geo.address?.village ||
+            geo.address?.state ||
+            "Dhaka";
+
+          const detectedCountry = geo.address?.country || "Bangladesh";
+
+          await loadPrayerTimes(detectedCity, detectedCountry);
+        } catch {
+          setError("Could not detect city from your location.");
+        } finally {
+          setLocationLoading(false);
+        }
+      },
+      () => {
+        setLocationLoading(false);
+        setError("Location permission was denied or unavailable.");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+      }
+    );
+  }
+
+  async function enableAzan() {
+    if (!audioRef.current) return;
+
+    try {
+      audioRef.current.volume = 1;
+      await audioRef.current.play();
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setSoundEnabled(true);
+      setError("");
+    } catch {
+      setError("Your browser blocked sound. Tap the button again after interacting with the page.");
     }
   }
 
@@ -139,6 +232,7 @@ export default function Page() {
       return {
         label: "Loading...",
         timeLeft: 0,
+        eventKey: "loading",
       };
     }
 
@@ -146,6 +240,7 @@ export default function Page() {
       return {
         label: "Sehri ends in",
         timeLeft: fajr.getTime() - now.getTime(),
+        eventKey: "sehri",
       };
     }
 
@@ -153,28 +248,63 @@ export default function Page() {
       return {
         label: "Iftar in",
         timeLeft: maghrib.getTime() - now.getTime(),
+        eventKey: "iftar",
       };
     }
 
     return {
       label: "Today's fasting window has ended",
       timeLeft: 0,
+      eventKey: "done",
     };
   }, [now, fajr, maghrib]);
 
+  useEffect(() => {
+    if (!soundEnabled || !audioRef.current || !fajr || !maghrib) return;
+
+    const isAtFajr =
+      now >= fajr &&
+      now.getTime() - fajr.getTime() < 4000 &&
+      playedForEvent !== "fajr";
+
+    const isAtMaghrib =
+      now >= maghrib &&
+      now.getTime() - maghrib.getTime() < 4000 &&
+      playedForEvent !== "maghrib";
+
+    if (isAtFajr || isAtMaghrib) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {
+        setError("Browser blocked azan playback.");
+      });
+      setPlayedForEvent(isAtFajr ? "fajr" : "maghrib");
+    }
+  }, [now, fajr, maghrib, soundEnabled, playedForEvent]);
+
   return (
-    <main style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0b1220 0%, #111827 100%)", color: "white", padding: "24px" }}>
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(180deg, #0b1220 0%, #111827 100%)",
+        color: "white",
+        padding: "24px",
+      }}
+    >
+      <audio ref={audioRef} preload="auto" src="/azan.mp3" />
+
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={{ marginBottom: "24px" }}>
-          <div style={{
-            display: "inline-block",
-            padding: "8px 14px",
-            borderRadius: "999px",
-            background: "rgba(255,255,255,0.08)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            fontSize: "14px",
-            marginBottom: "14px"
-          }}>
+          <div
+            style={{
+              display: "inline-block",
+              padding: "8px 14px",
+              borderRadius: "999px",
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              fontSize: "14px",
+              marginBottom: "14px",
+            }}
+          >
             Sehri & Iftar Countdown
           </div>
 
@@ -183,20 +313,24 @@ export default function Page() {
           </h1>
 
           <p style={{ margin: 0, color: "#c7d2e0", maxWidth: "700px", lineHeight: 1.6 }}>
-            Enter a city and country to see Sehri last time, Iftar time, and a live countdown to the next event.
+            Auto location, azan sound, and live countdown for Sehri and Iftar.
           </p>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: "20px" }}>
-          <section style={{
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: "22px",
-            padding: "20px"
-          }}>
+          <section
+            style={{
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: "22px",
+              padding: "20px",
+            }}
+          >
             <h2>Location</h2>
 
-            <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>City</label>
+            <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>
+              City
+            </label>
             <input
               value={cityInput}
               onChange={(e) => setCityInput(e.target.value)}
@@ -208,11 +342,13 @@ export default function Page() {
                 border: "1px solid rgba(255,255,255,0.12)",
                 background: "rgba(0,0,0,0.2)",
                 color: "white",
-                outline: "none"
+                outline: "none",
               }}
             />
 
-            <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>Country</label>
+            <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>
+              Country
+            </label>
             <input
               value={countryInput}
               onChange={(e) => setCountryInput(e.target.value)}
@@ -224,7 +360,7 @@ export default function Page() {
                 border: "1px solid rgba(255,255,255,0.12)",
                 background: "rgba(0,0,0,0.2)",
                 color: "white",
-                outline: "none"
+                outline: "none",
               }}
             />
 
@@ -240,49 +376,91 @@ export default function Page() {
                 background: "white",
                 color: "#09111f",
                 fontWeight: 700,
-                cursor: "pointer"
+                cursor: "pointer",
               }}
             >
               {loading ? "Loading..." : "Update times"}
             </button>
 
-            <div style={{
-              marginTop: "18px",
-              padding: "14px",
-              borderRadius: "16px",
-              background: "rgba(0,0,0,0.18)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#d9e3ee",
-              lineHeight: 1.8,
-              fontSize: "14px"
-            }}>
+            <button
+              onClick={useMyLocation}
+              disabled={locationLoading}
+              style={{
+                width: "100%",
+                marginTop: "10px",
+                padding: "12px 14px",
+                border: "1px solid rgba(255,255,255,0.18)",
+                borderRadius: "14px",
+                background: "transparent",
+                color: "white",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              {locationLoading ? "Detecting location..." : "Use My Location"}
+            </button>
+
+            <button
+              onClick={enableAzan}
+              style={{
+                width: "100%",
+                marginTop: "10px",
+                padding: "12px 14px",
+                border: "1px solid rgba(255,255,255,0.18)",
+                borderRadius: "14px",
+                background: soundEnabled ? "#1f7a45" : "transparent",
+                color: "white",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              {soundEnabled ? "Azan Sound Enabled" : "Enable Azan Sound"}
+            </button>
+
+            <div
+              style={{
+                marginTop: "18px",
+                padding: "14px",
+                borderRadius: "16px",
+                background: "rgba(0,0,0,0.18)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "#d9e3ee",
+                lineHeight: 1.8,
+                fontSize: "14px",
+              }}
+            >
               <div><strong>Location:</strong> {city}, {country}</div>
               <div><strong>Date:</strong> {readableDate || "--"}</div>
               <div><strong>Timezone:</strong> {timezone || "--"}</div>
               <div><strong>Method:</strong> {methodName || "--"}</div>
+              <div><strong>Sound:</strong> {soundEnabled ? "Enabled" : "Off"}</div>
             </div>
 
             {error ? (
-              <div style={{
-                marginTop: "14px",
-                padding: "12px 14px",
-                borderRadius: "14px",
-                background: "rgba(255, 70, 70, 0.12)",
-                border: "1px solid rgba(255, 70, 70, 0.35)",
-                color: "#ffd1d1"
-              }}>
+              <div
+                style={{
+                  marginTop: "14px",
+                  padding: "12px 14px",
+                  borderRadius: "14px",
+                  background: "rgba(255, 70, 70, 0.12)",
+                  border: "1px solid rgba(255, 70, 70, 0.35)",
+                  color: "#ffd1d1",
+                }}
+              >
                 {error}
               </div>
             ) : null}
           </section>
 
           <section style={{ display: "grid", gap: "20px" }}>
-            <div style={{
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: "22px",
-              padding: "28px"
-            }}>
+            <div
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "22px",
+                padding: "28px",
+              }}
+            >
               <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
                 {nextEvent.label}
               </div>
@@ -300,12 +478,14 @@ export default function Page() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-              <div style={{
-                background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: "22px",
-                padding: "20px"
-              }}>
+              <div
+                style={{
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "22px",
+                  padding: "20px",
+                }}
+              >
                 <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
                   Sehri last time
                 </div>
@@ -315,12 +495,14 @@ export default function Page() {
                 <div style={{ color: "#b8c5d6", fontSize: "14px" }}>Based on Fajr</div>
               </div>
 
-              <div style={{
-                background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: "22px",
-                padding: "20px"
-              }}>
+              <div
+                style={{
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "22px",
+                  padding: "20px",
+                }}
+              >
                 <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
                   Iftar time
                 </div>
@@ -329,6 +511,19 @@ export default function Page() {
                 </div>
                 <div style={{ color: "#b8c5d6", fontSize: "14px" }}>Based on Maghrib</div>
               </div>
+            </div>
+
+            <div
+              style={{
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: "18px",
+                padding: "16px 20px",
+                color: "#cbd5e1",
+                fontSize: "14px",
+              }}
+            >
+              Developed by <strong>Tanzeem Hasan Tashrif</strong>
             </div>
           </section>
         </div>
