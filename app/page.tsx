@@ -193,25 +193,23 @@ export default function Page() {
     );
   }
 
- async function enableAzan() {
+async function enableAzan() {
   if (!audioRef.current) return;
 
   try {
     setError("");
-    audioRef.current.volume = 1;
-    audioRef.current.currentTime = 0;
 
+    audioRef.current.currentTime = 0;
+    audioRef.current.volume = 1;
+
+    // PLAY FULLY (don't pause immediately)
     await audioRef.current.play();
+
     setSoundEnabled(true);
 
-    setTimeout(() => {
-      if (!audioRef.current) return;
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }, 1200);
   } catch (err) {
-    console.error(err);
-    setError("Sound could not be enabled. Check that /azan.mp3 exists and try again after tapping the page once.");
+    console.log(err);
+    setError("Tap the screen once, then press Enable Azan again.");
   }
 }
 
