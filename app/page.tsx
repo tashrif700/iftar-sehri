@@ -56,12 +56,10 @@ function formatClock(date: Date | null) {
 
 function formatCountdown(ms: number) {
   if (ms <= 0) return "00:00:00";
-
   const totalSeconds = Math.floor(ms / 1000);
   const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
   const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
-
   return `${hours}:${minutes}:${seconds}`;
 }
 
@@ -85,14 +83,19 @@ export default function Page() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [playedForEvent, setPlayedForEvent] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(new Date());
-    }, 1000);
+    const checkScreen = () => setIsMobile(window.innerWidth < 900);
+    checkScreen();
+    window.addEventListener("resize", checkScreen);
+    return () => window.removeEventListener("resize", checkScreen);
+  }, []);
 
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -155,13 +158,10 @@ export default function Page() {
           const lon = position.coords.longitude;
 
           const reverseUrl =
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
-            `&lat=${lat}&lon=${lon}`;
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
 
           const response = await fetch(reverseUrl, {
-            headers: {
-              Accept: "application/json",
-            },
+            headers: { Accept: "application/json" },
           });
 
           const geo: ReverseGeoResponse = await response.json();
@@ -204,7 +204,7 @@ export default function Page() {
       setSoundEnabled(true);
       setError("");
     } catch {
-      setError("Your browser blocked sound. Tap the button again after interacting with the page.");
+      setError("Your browser blocked sound. Tap again after interacting with the page.");
     }
   }
 
@@ -281,13 +281,20 @@ export default function Page() {
     }
   }, [now, fajr, maghrib, soundEnabled, playedForEvent]);
 
+  const cardStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: "22px",
+    padding: isMobile ? "18px" : "20px",
+  };
+
   return (
     <main
       style={{
         minHeight: "100vh",
         background: "linear-gradient(180deg, #0b1220 0%, #111827 100%)",
         color: "white",
-        padding: "24px",
+        padding: isMobile ? "14px" : "24px",
       }}
     >
       <audio ref={audioRef} preload="auto" src="/azan.mp3" />
@@ -308,7 +315,13 @@ export default function Page() {
             Sehri & Iftar Countdown
           </div>
 
-          <h1 style={{ margin: "0 0 10px", fontSize: "42px", lineHeight: 1.1 }}>
+          <h1
+            style={{
+              margin: "0 0 10px",
+              fontSize: isMobile ? "34px" : "42px",
+              lineHeight: 1.08,
+            }}
+          >
             Live Sehri and Iftar time app
           </h1>
 
@@ -317,15 +330,14 @@ export default function Page() {
           </p>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: "20px" }}>
-          <section
-            style={{
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: "22px",
-              padding: "20px",
-            }}
-          >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "340px 1fr",
+            gap: "20px",
+          }}
+        >
+          <section style={cardStyle}>
             <h2>Location</h2>
 
             <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>
@@ -455,16 +467,23 @@ export default function Page() {
           <section style={{ display: "grid", gap: "20px" }}>
             <div
               style={{
-                background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: "22px",
-                padding: "28px",
+                ...cardStyle,
+                padding: isMobile ? "20px" : "28px",
               }}
             >
               <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
                 {nextEvent.label}
               </div>
-              <div style={{ fontSize: "64px", lineHeight: 1, fontWeight: 800, letterSpacing: "1px", margin: "10px 0 14px" }}>
+              <div
+                style={{
+                  fontSize: isMobile ? "42px" : "64px",
+                  lineHeight: 1,
+                  fontWeight: 800,
+                  letterSpacing: "1px",
+                  margin: "10px 0 14px",
+                  wordBreak: "break-word",
+                }}
+              >
                 {formatCountdown(nextEvent.timeLeft)}
               </div>
               <div style={{ color: "#b8c5d6", fontSize: "14px" }}>
@@ -477,36 +496,28 @@ export default function Page() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "22px",
-                  padding: "20px",
-                }}
-              >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                gap: "20px",
+              }}
+            >
+              <div style={cardStyle}>
                 <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
                   Sehri last time
                 </div>
-                <div style={{ fontSize: "34px", fontWeight: 700, margin: "10px 0" }}>
+                <div style={{ fontSize: isMobile ? "28px" : "34px", fontWeight: 700, margin: "10px 0" }}>
                   {formatClock(fajr)}
                 </div>
                 <div style={{ color: "#b8c5d6", fontSize: "14px" }}>Based on Fajr</div>
               </div>
 
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "22px",
-                  padding: "20px",
-                }}
-              >
+              <div style={cardStyle}>
                 <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
                   Iftar time
                 </div>
-                <div style={{ fontSize: "34px", fontWeight: 700, margin: "10px 0" }}>
+                <div style={{ fontSize: isMobile ? "28px" : "34px", fontWeight: 700, margin: "10px 0" }}>
                   {formatClock(maghrib)}
                 </div>
                 <div style={{ color: "#b8c5d6", fontSize: "14px" }}>Based on Maghrib</div>
