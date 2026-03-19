@@ -198,18 +198,9 @@ async function enableAzan() {
 
   try {
     setError("");
-
-    audioRef.current.currentTime = 0;
-    audioRef.current.volume = 1;
-
-    // PLAY FULLY (don't pause immediately)
-    await audioRef.current.play();
-
     setSoundEnabled(true);
-
-  } catch (err) {
-    console.log(err);
-    setError("Tap the screen once, then press Enable Azan again.");
+  } catch {
+    setError("Could not enable azan sound.");
   }
 }
 
@@ -264,27 +255,22 @@ async function enableAzan() {
     };
   }, [now, fajr, maghrib]);
 
-  useEffect(() => {
-    if (!soundEnabled || !audioRef.current || !fajr || !maghrib) return;
+ useEffect(() => {
+  if (!soundEnabled || !audioRef.current || !maghrib) return;
 
-    const isAtFajr =
-      now >= fajr &&
-      now.getTime() - fajr.getTime() < 4000 &&
-      playedForEvent !== "fajr";
+  const isAtMaghrib =
+    now >= maghrib &&
+    now.getTime() - maghrib.getTime() < 2000 &&
+    playedForEvent !== "maghrib";
 
-    const isAtMaghrib =
-      now >= maghrib &&
-      now.getTime() - maghrib.getTime() < 4000 &&
-      playedForEvent !== "maghrib";
-
-    if (isAtFajr || isAtMaghrib) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        setError("Browser blocked azan playback.");
-      });
-      setPlayedForEvent(isAtFajr ? "fajr" : "maghrib");
-    }
-  }, [now, fajr, maghrib, soundEnabled, playedForEvent]);
+  if (isAtMaghrib) {
+    audioRef.current.currentTime = 0;
+    audioRef.current.play().catch(() => {
+      setError("Browser blocked azan playback. Tap Enable Azan Sound once first.");
+    });
+    setPlayedForEvent("maghrib");
+  }
+}, [now, maghrib, soundEnabled, playedForEvent]);
 
   const cardStyle: React.CSSProperties = {
     background: "rgba(255,255,255,0.06)",
@@ -302,7 +288,7 @@ async function enableAzan() {
         padding: isMobile ? "14px" : "24px",
       }}
     >
-      <audio ref={audioRef} preload="auto" src="/azan.mp3" playsInline />
+     <audio ref={audioRef} preload="auto" src="/azan.mp3" playsInline />
 
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={{ marginBottom: "24px" }}>
