@@ -302,7 +302,7 @@ async function enableAzan() {
         padding: isMobile ? "14px" : "24px",
       }}
     >
-      <audio ref={audioRef} preload="auto" src="/azan.mp3" />
+      <audio ref={audioRef} preload="auto" src="/azan.mp3" playsInline />
 
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={{ marginBottom: "24px" }}>
