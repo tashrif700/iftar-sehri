@@ -193,20 +193,27 @@ export default function Page() {
     );
   }
 
-  async function enableAzan() {
-    if (!audioRef.current) return;
+ async function enableAzan() {
+  if (!audioRef.current) return;
 
-    try {
-      audioRef.current.volume = 1;
-      await audioRef.current.play();
+  try {
+    setError("");
+    audioRef.current.volume = 1;
+    audioRef.current.currentTime = 0;
+
+    await audioRef.current.play();
+    setSoundEnabled(true);
+
+    setTimeout(() => {
+      if (!audioRef.current) return;
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
-      setSoundEnabled(true);
-      setError("");
-    } catch {
-      setError("Your browser blocked sound. Tap again after interacting with the page.");
-    }
+    }, 1200);
+  } catch (err) {
+    console.error(err);
+    setError("Sound could not be enabled. Check that /azan.mp3 exists and try again after tapping the page once.");
   }
+}
 
   useEffect(() => {
     loadPrayerTimes("Dhaka", "Bangladesh");
