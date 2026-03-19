@@ -67,25 +67,30 @@ export default function Page() {
   const [cityInput, setCityInput] = useState("Dhaka");
   const [countryInput, setCountryInput] = useState("Bangladesh");
 
-  const [city, setCity] = useState("Dhaka");
-  const [country, setCountry] = useState("Bangladesh");
+  const [displayLocation, setDisplayLocation] = useState("Dhaka, Bangladesh");
+  const [timezone, setTimezone] = useState("");
+  const [methodName, setMethodName] = useState("");
+  const [readableDate, setReadableDate] = useState("");
 
   const [fajr, setFajr] = useState<Date | null>(null);
   const [maghrib, setMaghrib] = useState<Date | null>(null);
-  const [readableDate, setReadableDate] = useState("");
-  const [timezone, setTimezone] = useState("");
-  const [methodName, setMethodName] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
 
-  const [locationLoading, setLocationLoading] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [playedForEvent, setPlayedForEvent] = useState<string | null>(null);
+
   const [isMobile, setIsMobile] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const checkScreen = () => setIsMobile(window.innerWidth < 900);
@@ -94,12 +99,7 @@ export default function Page() {
     return () => window.removeEventListener("resize", checkScreen);
   }, []);
 
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  async function loadPrayerTimes(nextCity: string, nextCountry: string) {
+  async function loadPrayerTimesByCity(nextCity: string, nextCountry: string) {
     setLoading(true);
     setError("");
 
@@ -117,28 +117,56 @@ export default function Page() {
         !json.data?.timings?.Fajr ||
         !json.data?.timings?.Maghrib
       ) {
-        throw new Error("Could not load prayer times for this location.");
+        throw new Error("Could not load prayer times for this city and country.");
       }
 
       const current = new Date();
-      const fajrTime = parseTimeForToday(json.data.timings.Fajr, current);
-      const maghribTime = parseTimeForToday(json.data.timings.Maghrib, current);
-
-      setFajr(fajrTime);
-      setMaghrib(maghribTime);
+      setFajr(parseTimeForToday(json.data.timings.Fajr, current));
+      setMaghrib(parseTimeForToday(json.data.timings.Maghrib, current));
       setReadableDate(json.data.date?.readable || "");
       setTimezone(json.data.meta?.timezone || "");
       setMethodName(json.data.meta?.method?.name || "");
-
-      setCity(nextCity);
-      setCountry(nextCountry);
-      setCityInput(nextCity);
-      setCountryInput(nextCountry);
+      setDisplayLocation(`${nextCity}, ${nextCountry}`);
       setPlayedForEvent(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadPrayerTimesByCoordinates(lat: number, lon: number, label?: string) {
+    setLocationLoading(true);
+    setError("");
+
+    try {
+      const url =
+        `https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lon}&method=2`;
+
+      const response = await fetch(url, { cache: "no-store" });
+      const json: ApiResponse = await response.json();
+
+      if (
+        !response.ok ||
+        json.code !== 200 ||
+        !json.data?.timings?.Fajr ||
+        !json.data?.timings?.Maghrib
+      ) {
+        throw new Error("Could not load prayer times for your location.");
+      }
+
+      const current = new Date();
+      setFajr(parseTimeForToday(json.data.timings.Fajr, current));
+      setMaghrib(parseTimeForToday(json.data.timings.Maghrib, current));
+      setReadableDate(json.data.date?.readable || "");
+      setTimezone(json.data.meta?.timezone || "");
+      setMethodName(json.data.meta?.method?.name || "");
+      setDisplayLocation(label || `Lat ${lat.toFixed(3)}, Lon ${lon.toFixed(3)}`);
+      setPlayedForEvent(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load your location times.");
+    } finally {
+      setLocationLoading(false);
     }
   }
 
@@ -153,38 +181,43 @@ export default function Page() {
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        try {
-          const lat = position.coords.latitude;
-          const lon = position.coords.longitude;
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
 
+        try {
           const reverseUrl =
             `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
 
-          const response = await fetch(reverseUrl, {
+          const reverseResponse = await fetch(reverseUrl, {
             headers: { Accept: "application/json" },
           });
 
-          const geo: ReverseGeoResponse = await response.json();
+          const geo: ReverseGeoResponse = await reverseResponse.json();
 
           const detectedCity =
             geo.address?.city ||
             geo.address?.town ||
             geo.address?.village ||
             geo.address?.state ||
-            "Dhaka";
+            "Your Location";
 
-          const detectedCountry = geo.address?.country || "Bangladesh";
+          const detectedCountry = geo.address?.country || "";
 
-          await loadPrayerTimes(detectedCity, detectedCountry);
+          const label = detectedCountry
+            ? `${detectedCity}, ${detectedCountry}`
+            : detectedCity;
+
+          setCityInput(detectedCity);
+          setCountryInput(detectedCountry || "Bangladesh");
+
+          await loadPrayerTimesByCoordinates(lat, lon, label);
         } catch {
-          setError("Could not detect city from your location.");
-        } finally {
-          setLocationLoading(false);
+          await loadPrayerTimesByCoordinates(lat, lon, "Your Current Location");
         }
       },
       () => {
         setLocationLoading(false);
-        setError("Location permission was denied or unavailable.");
+        setError("Location permission denied or unavailable.");
       },
       {
         enableHighAccuracy: true,
@@ -193,19 +226,13 @@ export default function Page() {
     );
   }
 
-async function enableAzan() {
-  if (!audioRef.current) return;
-
-  try {
-    setError("");
+  async function enableAzan() {
     setSoundEnabled(true);
-  } catch {
-    setError("Could not enable azan sound.");
+    setError("");
   }
-}
 
   useEffect(() => {
-    loadPrayerTimes("Dhaka", "Bangladesh");
+    loadPrayerTimesByCity("Dhaka", "Bangladesh");
   }, []);
 
   useEffect(() => {
@@ -216,19 +243,21 @@ async function enableAzan() {
         current.getMinutes() === 0 &&
         current.getSeconds() < 2
       ) {
-        loadPrayerTimes(city, country);
+        if (displayLocation.includes("Lat ") || displayLocation.includes("Current Location")) {
+          return;
+        }
+        loadPrayerTimesByCity(cityInput, countryInput);
       }
     }, 1000);
 
     return () => clearInterval(refreshAtMidnight);
-  }, [city, country]);
+  }, [cityInput, countryInput, displayLocation]);
 
   const nextEvent = useMemo(() => {
     if (!fajr || !maghrib) {
       return {
         label: "Loading...",
         timeLeft: 0,
-        eventKey: "loading",
       };
     }
 
@@ -236,7 +265,6 @@ async function enableAzan() {
       return {
         label: "Sehri ends in",
         timeLeft: fajr.getTime() - now.getTime(),
-        eventKey: "sehri",
       };
     }
 
@@ -244,33 +272,31 @@ async function enableAzan() {
       return {
         label: "Iftar in",
         timeLeft: maghrib.getTime() - now.getTime(),
-        eventKey: "iftar",
       };
     }
 
     return {
       label: "Today's fasting window has ended",
       timeLeft: 0,
-      eventKey: "done",
     };
   }, [now, fajr, maghrib]);
 
- useEffect(() => {
-  if (!soundEnabled || !audioRef.current || !maghrib) return;
+  useEffect(() => {
+    if (!soundEnabled || !audioRef.current || !maghrib) return;
 
-  const isAtMaghrib =
-    now >= maghrib &&
-    now.getTime() - maghrib.getTime() < 2000 &&
-    playedForEvent !== "maghrib";
+    const isAtMaghrib =
+      now >= maghrib &&
+      now.getTime() - maghrib.getTime() < 2000 &&
+      playedForEvent !== "maghrib";
 
-  if (isAtMaghrib) {
-    audioRef.current.currentTime = 0;
-    audioRef.current.play().catch(() => {
-      setError("Browser blocked azan playback. Tap Enable Azan Sound once first.");
-    });
-    setPlayedForEvent("maghrib");
-  }
-}, [now, maghrib, soundEnabled, playedForEvent]);
+    if (isAtMaghrib) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {
+        setError("Browser blocked azan playback. Tap Enable Azan Sound once first.");
+      });
+      setPlayedForEvent("maghrib");
+    }
+  }, [now, maghrib, soundEnabled, playedForEvent]);
 
   const cardStyle: React.CSSProperties = {
     background: "rgba(255,255,255,0.06)",
@@ -288,7 +314,7 @@ async function enableAzan() {
         padding: isMobile ? "14px" : "24px",
       }}
     >
-     <audio ref={audioRef} preload="auto" src="/azan.mp3" playsInline />
+      <audio ref={audioRef} preload="auto" src="/azan.mp3" playsInline />
 
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={{ marginBottom: "24px" }}>
@@ -317,7 +343,7 @@ async function enableAzan() {
           </h1>
 
           <p style={{ margin: 0, color: "#c7d2e0", maxWidth: "700px", lineHeight: 1.6 }}>
-            Auto location, azan sound, and live countdown for Sehri and Iftar.
+            Manual city entry or exact current location with live Iftar countdown.
           </p>
         </div>
 
@@ -368,7 +394,7 @@ async function enableAzan() {
             />
 
             <button
-              onClick={() => loadPrayerTimes(cityInput.trim(), countryInput.trim())}
+              onClick={() => loadPrayerTimesByCity(cityInput.trim(), countryInput.trim())}
               disabled={loading}
               style={{
                 width: "100%",
@@ -382,7 +408,7 @@ async function enableAzan() {
                 cursor: "pointer",
               }}
             >
-              {loading ? "Loading..." : "Update times"}
+              {loading ? "Loading..." : "Use Manual City"}
             </button>
 
             <button
@@ -417,7 +443,7 @@ async function enableAzan() {
                 cursor: "pointer",
               }}
             >
-              {soundEnabled ? "Azan Sound Enabled" : "Enable Azan Sound"}
+              {soundEnabled ? "Azan Ready for Iftar" : "Enable Azan Sound"}
             </button>
 
             <div
@@ -432,11 +458,11 @@ async function enableAzan() {
                 fontSize: "14px",
               }}
             >
-              <div><strong>Location:</strong> {city}, {country}</div>
+              <div><strong>Location:</strong> {displayLocation}</div>
               <div><strong>Date:</strong> {readableDate || "--"}</div>
               <div><strong>Timezone:</strong> {timezone || "--"}</div>
               <div><strong>Method:</strong> {methodName || "--"}</div>
-              <div><strong>Sound:</strong> {soundEnabled ? "Enabled" : "Off"}</div>
+              <div><strong>Sound:</strong> {soundEnabled ? "Ready" : "Off"}</div>
             </div>
 
             {error ? (
