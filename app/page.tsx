@@ -13,6 +13,12 @@ type ApiResponse = {
     date?: {
       readable?: string;
     };
+    meta?: {
+      timezone?: string;
+      method?: {
+        name?: string;
+      };
+    };
   };
 };
 
@@ -25,77 +31,308 @@ function parseTimeForToday(timeStr: string, now: Date) {
     now.getMonth(),
     now.getDate(),
     hour,
-    minute
+    minute,
+    0
   );
+}
+
+function formatClock(date: Date | null) {
+  if (!date) return "--:--";
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function formatCountdown(ms: number) {
   if (ms <= 0) return "00:00:00";
 
-  const s = Math.floor(ms / 1000);
-  const h = String(Math.floor(s / 3600)).padStart(2, "0");
-  const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
-  const sec = String(s % 60).padStart(2, "0");
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
 
-  return `${h}:${m}:${sec}`;
+  return `${hours}:${minutes}:${seconds}`;
 }
 
 export default function Page() {
+  const [cityInput, setCityInput] = useState("Dhaka");
+  const [countryInput, setCountryInput] = useState("Bangladesh");
+
   const [city, setCity] = useState("Dhaka");
   const [country, setCountry] = useState("Bangladesh");
 
   const [fajr, setFajr] = useState<Date | null>(null);
   const [maghrib, setMaghrib] = useState<Date | null>(null);
+  const [readableDate, setReadableDate] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [methodName, setMethodName] = useState("");
 
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, []);
 
-  async function load() {
-    const res = await fetch(
-      `https://api.aladhan.com/v1/timingsByCity?city=${city}&country=${country}`
-    );
-    const json: ApiResponse = await res.json();
+  async function loadPrayerTimes(nextCity: string, nextCountry: string) {
+    setLoading(true);
+    setError("");
 
-    if (json.data?.timings?.Fajr && json.data?.timings?.Maghrib) {
-      const today = new Date();
-      setFajr(parseTimeForToday(json.data.timings.Fajr, today));
-      setMaghrib(parseTimeForToday(json.data.timings.Maghrib, today));
+    try {
+      const url =
+        `https://api.aladhan.com/v1/timingsByCity?city=${encodeURIComponent(nextCity)}` +
+        `&country=${encodeURIComponent(nextCountry)}&method=2`;
+
+      const response = await fetch(url, { cache: "no-store" });
+      const json: ApiResponse = await response.json();
+
+      if (!response.ok || json.code !== 200 || !json.data?.timings?.Fajr || !json.data?.timings?.Maghrib) {
+        throw new Error("Could not load prayer times for this location.");
+      }
+
+      const current = new Date();
+      const fajrTime = parseTimeForToday(json.data.timings.Fajr, current);
+      const maghribTime = parseTimeForToday(json.data.timings.Maghrib, current);
+
+      setFajr(fajrTime);
+      setMaghrib(maghribTime);
+      setReadableDate(json.data.date?.readable || "");
+      setTimezone(json.data.meta?.timezone || "");
+      setMethodName(json.data.meta?.method?.name || "");
+
+      setCity(nextCity);
+      setCountry(nextCountry);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
+    loadPrayerTimes("Dhaka", "Bangladesh");
   }, []);
 
-  let label = "Loading...";
-  let remaining = 0;
+  useEffect(() => {
+    const refreshAtMidnight = setInterval(() => {
+      const current = new Date();
+      if (
+        current.getHours() === 0 &&
+        current.getMinutes() === 0 &&
+        current.getSeconds() < 2
+      ) {
+        loadPrayerTimes(city, country);
+      }
+    }, 1000);
 
-  if (fajr && now < fajr) {
-    label = "Sehri ends in";
-    remaining = fajr.getTime() - now.getTime();
-  } else if (maghrib && now < maghrib) {
-    label = "Iftar in";
-    remaining = maghrib.getTime() - now.getTime();
-  }
+    return () => clearInterval(refreshAtMidnight);
+  }, [city, country]);
+
+  const nextEvent = useMemo(() => {
+    if (!fajr || !maghrib) {
+      return {
+        label: "Loading...",
+        timeLeft: 0,
+      };
+    }
+
+    if (now < fajr) {
+      return {
+        label: "Sehri ends in",
+        timeLeft: fajr.getTime() - now.getTime(),
+      };
+    }
+
+    if (now < maghrib) {
+      return {
+        label: "Iftar in",
+        timeLeft: maghrib.getTime() - now.getTime(),
+      };
+    }
+
+    return {
+      label: "Today's fasting window has ended",
+      timeLeft: 0,
+    };
+  }, [now, fajr, maghrib]);
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Sehri & Iftar Countdown</h1>
+    <main style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0b1220 0%, #111827 100%)", color: "white", padding: "24px" }}>
+      <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
+        <div style={{ marginBottom: "24px" }}>
+          <div style={{
+            display: "inline-block",
+            padding: "8px 14px",
+            borderRadius: "999px",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            fontSize: "14px",
+            marginBottom: "14px"
+          }}>
+            Sehri & Iftar Countdown
+          </div>
 
-      <input value={city} onChange={e => setCity(e.target.value)} />
-      <input value={country} onChange={e => setCountry(e.target.value)} />
+          <h1 style={{ margin: "0 0 10px", fontSize: "42px", lineHeight: 1.1 }}>
+            Live Sehri and Iftar time app
+          </h1>
 
-      <button onClick={load}>Update</button>
+          <p style={{ margin: 0, color: "#c7d2e0", maxWidth: "700px", lineHeight: 1.6 }}>
+            Enter a city and country to see Sehri last time, Iftar time, and a live countdown to the next event.
+          </p>
+        </div>
 
-      <h2>{label}</h2>
-      <h1>{formatCountdown(remaining)}</h1>
+        <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: "20px" }}>
+          <section style={{
+            background: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: "22px",
+            padding: "20px"
+          }}>
+            <h2>Location</h2>
 
-      <p>Sehri: {fajr?.toLocaleTimeString()}</p>
-      <p>Iftar: {maghrib?.toLocaleTimeString()}</p>
-    </div>
+            <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>City</label>
+            <input
+              value={cityInput}
+              onChange={(e) => setCityInput(e.target.value)}
+              placeholder="Dhaka"
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: "14px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(0,0,0,0.2)",
+                color: "white",
+                outline: "none"
+              }}
+            />
+
+            <label style={{ display: "block", margin: "14px 0 8px", fontSize: "14px", color: "#d8e0ea" }}>Country</label>
+            <input
+              value={countryInput}
+              onChange={(e) => setCountryInput(e.target.value)}
+              placeholder="Bangladesh"
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: "14px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(0,0,0,0.2)",
+                color: "white",
+                outline: "none"
+              }}
+            />
+
+            <button
+              onClick={() => loadPrayerTimes(cityInput.trim(), countryInput.trim())}
+              disabled={loading}
+              style={{
+                width: "100%",
+                marginTop: "16px",
+                padding: "12px 14px",
+                border: "none",
+                borderRadius: "14px",
+                background: "white",
+                color: "#09111f",
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              {loading ? "Loading..." : "Update times"}
+            </button>
+
+            <div style={{
+              marginTop: "18px",
+              padding: "14px",
+              borderRadius: "16px",
+              background: "rgba(0,0,0,0.18)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "#d9e3ee",
+              lineHeight: 1.8,
+              fontSize: "14px"
+            }}>
+              <div><strong>Location:</strong> {city}, {country}</div>
+              <div><strong>Date:</strong> {readableDate || "--"}</div>
+              <div><strong>Timezone:</strong> {timezone || "--"}</div>
+              <div><strong>Method:</strong> {methodName || "--"}</div>
+            </div>
+
+            {error ? (
+              <div style={{
+                marginTop: "14px",
+                padding: "12px 14px",
+                borderRadius: "14px",
+                background: "rgba(255, 70, 70, 0.12)",
+                border: "1px solid rgba(255, 70, 70, 0.35)",
+                color: "#ffd1d1"
+              }}>
+                {error}
+              </div>
+            ) : null}
+          </section>
+
+          <section style={{ display: "grid", gap: "20px" }}>
+            <div style={{
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: "22px",
+              padding: "28px"
+            }}>
+              <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
+                {nextEvent.label}
+              </div>
+              <div style={{ fontSize: "64px", lineHeight: 1, fontWeight: 800, letterSpacing: "1px", margin: "10px 0 14px" }}>
+                {formatCountdown(nextEvent.timeLeft)}
+              </div>
+              <div style={{ color: "#b8c5d6", fontSize: "14px" }}>
+                Current time:{" "}
+                {now.toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+              <div style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "22px",
+                padding: "20px"
+              }}>
+                <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
+                  Sehri last time
+                </div>
+                <div style={{ fontSize: "34px", fontWeight: 700, margin: "10px 0" }}>
+                  {formatClock(fajr)}
+                </div>
+                <div style={{ color: "#b8c5d6", fontSize: "14px" }}>Based on Fajr</div>
+              </div>
+
+              <div style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "22px",
+                padding: "20px"
+              }}>
+                <div style={{ color: "#d2dbea", fontSize: "15px", marginBottom: "8px" }}>
+                  Iftar time
+                </div>
+                <div style={{ fontSize: "34px", fontWeight: 700, margin: "10px 0" }}>
+                  {formatClock(maghrib)}
+                </div>
+                <div style={{ color: "#b8c5d6", fontSize: "14px" }}>Based on Maghrib</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
   );
 }
